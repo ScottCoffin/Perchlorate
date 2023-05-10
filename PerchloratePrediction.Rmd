@@ -1,0 +1,105 @@
+---
+title: "prediction"
+author: "Scott Coffin"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# necessary packages
+library(tidyverse) #general purpose data science toolkit
+library(foreign)      # for reading .dbf files
+library(dplyr)#needed for data manipulation and summarizing
+library(data.table)
+```
+
+```{r}
+#averaged data pulled from SDWIS
+Perchlorate <- read_csv("PerchlorateAve.csv")
+
+#survey data from Eric
+Perch_survey <- readxl::read_excel("PerchlorateSurveyFeb2.xlsx", sheet = "Perchlorate Detects > 4ppb")
+Perch_survey <- Perch_survey %>% 
+  rename(compliance = `What is the Compliance Point for this Source (PSCode)?`) %>% 
+  rename(treatment = `What type of treatment is being used to achieve compliance (IX, blending, etc.)?`,
+         goal = `What Compliance Goal has System Established, if any? (i.e. DLR of 4 ug/l; 80% of MCL; MCL, NA?)`)
+```
+
+```{r}
+#extract compliance data from EDT
+compliance <- Perchlorate %>% 
+  filter(PS.Code %in% Perch_survey$compliance,
+         #XMOD != "<"
+         ) 
+
+#average data
+compliance_ave <- compliance %>% 
+  group_by(PS.Code) %>% 
+  summarise(complianceAve = mean(Finding)) %>% 
+  rename(compliance = PS.Code)
+```
+
+## All data
+```{r}
+joined <- left_join(Perch_survey, compliance_ave, by = "compliance")
+
+linear <- lm(complianceAve ~ FINDING, data = joined, na.action = "na.omit")
+summary(linear)
+```
+```{r}
+joined %>% 
+  ggplot(aes(complianceAve, FINDING)) +
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  scale_x_log10() +
+  scale_y_log10() +
+  xlab("Average Perchlorate in Compliance Point") +
+  ylab("Average Perchlorate in Source Wells") +
+  theme_minimal()
+```
+## No treatment
+```{r}
+joined %>% 
+  filter(treatment %in% c("Blending", "None")) %>% 
+  ggplot(aes(complianceAve, FINDING)) +
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  scale_x_log10() +
+  scale_y_log10() +
+  xlab("Average Perchlorate in Compliance Point") +
+  ylab("Average Perchlorate in Source Wells") +
+  theme_minimal()
+```
+```{r}
+linear <- lm(complianceAve ~ FINDING,
+             data = joined %>% filter(treatment %in% c("Blending", "None")
+                                     # grepl('MCL', goal)
+                                     ), 
+             na.action = "na.omit")
+summary(linear)
+```
+
+```{r}
+a <- joined %>% 
+  filter(treatment %in% c("Blending", "None")) %>% 
+  ggplot(aes(x = FINDING)) +
+  geom_histogram() +
+  xlab("Source Well Concentration") +
+  scale_x_continuous(limits = c(0,20)) +
+  theme_minimal()
+
+b <- joined %>% 
+  filter(treatment %in% c("Blending", "None")) %>% 
+  ggplot(aes(x = complianceAve)) +
+  geom_histogram() +
+  xlab("Compliance Point Concentration") +
+  scale_x_continuous(limits = c(0,20)) +
+  theme_minimal()
+
+gridExtra::grid.arrange(a,b)
+```
+

@@ -1,0 +1,197 @@
+---
+title: "PerchlorateDataPrep"
+author: "Scott Coffin"
+date: "5/15/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+#library(seplyr) #higher order dplyr functions package. not working for some reason
+```
+summarize hexchrom data by averages
+
+```{r Summarize by Water SYstem over all time points and PS Codes}
+Perchlorate<- read.csv("Perchlorate_RM.csv")
+
+#Report Manager doesn't print PSCOde if you save as a CSV. Have to export to EXCEL then conver to CSV
+
+#remove NAs so it doesn't convert to text
+
+#Summarize mean in ALL sources for a particular water system
+PWSID_Perchlorate <- group_by(Perchlorate,PS.Code, Finding, XMOD, Latitude, Longitude, System, County, Service.Connections, Population.TINWSYS, Filtration.Status, Sample.Date, Method)
+
+PerchlorateSumm <- summarize(PWSID_Perchlorate,
+          finding_mean = mean(Finding),
+          finding_median = median(Finding))
+rm(PWSID_Perchlorate)
+
+unPerchlorateSumm <- ungroup(PerchlorateSumm)
+rm(PerchlorateSumm)
+
+PerchlorateSummNA <- drop_na(unPerchlorateSumm, Latitude, Longitude)
+rm(unPerchlorateSumm)
+
+#Natural join (left) the PSCodes back to their respective water systems. Retains all PSCode data and only joins matches on right data
+PerchlorateSummNA_join <- merge(x=PerchlorateSummNA, y=Perchlorate, by="PS.Code", all.x = TRUE )
+rm(PerchlorateSummNA)
+
+write.csv(PerchlorateSummNA, "C:\\Users\\SCoffin\\ArcGIS\\ArcGIS\\Perchlorate\\PerchlorateAve.csv")
+```
+
+start
+```{r Summarize over all PS Codes}
+#START HERE IF YOU ALREADY HAVE DATA
+
+PerchlorateSummNA <- read.csv( "C:\\Users\\SCoffin\\ArcGIS\\ArcGIS\\Perchlorate\\PerchlorateAve.csv")
+
+tibble(Perchlorate)
+#Summarize mean HexChrome in for EACH source 
+PSCODE_Perchlorate <- group_by(Perchlorate, PS.Code, Latitude, Longitude) 
+
+
+
+#ungroup so you don't make an infinite loop
+unPerchloratePSCODE <- ungroup(PerchlorateSummPSCode)
+rm(PerchlorateSummPSCode)
+
+#drop the missing values
+PerchloratePSCodeNA <- drop_na(unPerchloratePSCODE, Latitude, Longitude)
+rm(unPerchloratePSCODE)
+
+#Natural join (left) the PSCodes back to their respective water systems. Retains all PSCode data and only joins matches on right data
+PerchlorateSummPSCodeNA_join <- merge(x=PerchloratePSCodeNA, y=Perchlorate, by="PS.Code", all.x = TRUE )
+rm(PerchloratePSCodeNA)
+
+#Make sure it worked
+head(PerchlorateSummPSCodeNA_join)
+
+#remove columns that are unnecessary
+PerchlorateSummPSCodeNA_join %>% select(PS.Code, Latitude.x, Longitude.x, finding_mean, finding_median, Regulating.Agency, Water.System.., System, Status, County, Service.Connections, Population.NT, Population.TINWSYS, Population.R, Population.T, Latitude.y, Longitude.y)
+
+write.csv(PerchlorateSummPSCodeNA_join, "C:\\Users\\SCoffin\\ArcGIS\\ArcGIS\\Perchlorate\\Perchlorate_PSCODE.csv")
+```
+Wells within ½-mile of detections likely to get detections once DLR is dropped from 4ppb to 2ppb. MCL is 6ppb. 
+
+Do circles around detections (>4ppb) and ID possible wells that could get detections. 
+
+```{r}
+##experimenting with dplyr functions
+#tbl_df(Perchlorate)
+#glimpse(Perchlorate)
+#View(Perchlorate)
+
+#Create sumamry statistics for perchlorate across all time points
+Sum <- Perchlorate %>%
+  group_by(PS.Code) %>%
+  summarize(mean_finding = mean(Finding),
+            median_finding = median(Finding), 
+            min_finding = min(Finding),
+            max_finding = max(Finding),
+            count = n()) %>%
+  arrange(desc(mean_finding))
+str(Sum)
+head(Sum)
+
+#Create lookup table
+lookup <- Perchlorate %>%
+  select(PS.Code, Latitude, Longitude, County, System, Regulating.Agency, Service.Connections, Population.TINWSYS,Population.NT,Population.R, Population.T, FED.Type, Facility.Name,Availability, Water.Type.Code,Description, Filtration.Status) %>%
+  drop_na(Latitude) %>% #remove missing geotags
+  droplevels() %>%
+  distinct() #remove duplicates
+lookup #check it out
+sum(is.na(lookup$Latitude))
+#why are there 1,218 missing values for lat? 
+
+#label the values that have "true detections" 
+
+
+#Join the summary table with the lookup values
+Complete <- right_join(Sum, lookup, by ="PS.Code")
+
+write.csv(Complete, "C:\\Users\\SCoffin\\ArcGIS\\ArcGIS\\Perchlorate\\Summary_Perchlorate_PSCODE.csv")
+
+#create new summary that only considers wells that have ever had a detection about the DLR (4)
+Sum_DetectsOnly <- Perchlorate %>%
+  group_by(PS.Code) %>%
+  summarize(mean_finding = mean(Finding),
+            median_finding = median(Finding), 
+            min_finding = min(Finding),
+            max_finding = max(Finding),
+            count = n()) %>%
+  filter(max_finding>4) %>%
+  arrange(desc(mean_finding))
+str(Sum_DetectsOnly)
+head(Sum_DetectsOnly)
+
+#Join the summary table with the lookup values
+Complete_DetectsOnly <- left_join(Sum_DetectsOnly, lookup, by ="PS.Code")
+
+FINAL_DetectsOnly <- Complete_DetectsOnly %>%  
+drop_na(Latitude) %>% #remove missing geotags
+  droplevels()
+
+write.csv(FINAL_DetectsOnly, "C:\\Users\\SCoffin\\ArcGIS\\ArcGIS\\Perchlorate\\DetectsOnly_Perchlorate_PSCODE.csv")
+```
+
+Lets play with the data.
+
+```{r}
+#plot data
+  ggplot(aes(x=mean_finding),data=Complete)+
+  geom_histogram (binwidth=0.5) +
+    coord_cartesian(
+      xlim=c(0,10)
+    )
+#notice the discreteness at 0 (sometimes reported by labs) and 4 (actual DLR)
+#let's zoom in on what's important 
+  ggplot(aes(x=mean_finding),data=Complete)+
+  geom_histogram (binwidth=0.5) +
+        scale_fill_gradient(low= "red",
+                        high="yellow") +
+    scale_x_continuous(limits=c(5,112))
+  
+#are there correlations with filtration status or water type code?
+Complete %>%
+  drop_na(Filtration.Status) %>%
+  ggplot(aes(x= Filtration.Status,y= mean_finding))+
+    geom_boxplot()
+#bad metadata
+
+Complete %>%
+  drop_na(Water.Type.Code) %>%
+  ggplot(aes(x= Water.Type.Code,y= mean_finding))+
+    geom_boxplot()
+
+#not sure what "blank" or "GU" means on WaterTypeCode, but it seems like most of the contaminated water is in the groundwater group. 
+
+```
+
+Extra stuff
+
+```{r}
+#Define new binary qualifier for "system name" containing the word "School"
+PerchlorateSummPSCodeNA_join$school <- ifelse(grepl("SCHOOL",PerchlorateSummPSCodeNA_join$System), 1, 0)
+#school gets marked as "1", if not, 0
+
+#count the number of school systems
+summarize(PerchlorateSummPSCodeNA_join,
+          schools = sum(school))
+#635
+
+#split the data into just what we need to join it back in ArcGis
+
+keeps <- c("school", "System")
+schoolsPSCode <- PerchlorateSummPSCodeNA_join[keeps]
+
+```
+
+```{r}
+#write
+write.csv(schoolsPSCode, "C:\\Users\\SCoffin\\ArcGIS\\ArcGIS\\Perchlorate\\schools_PSCODE.csv")
+```
+
+

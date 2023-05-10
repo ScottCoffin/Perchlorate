@@ -1,0 +1,138 @@
+---
+title: "PerchlorateDataPrep_EDT"
+author: "Scott Coffin"
+date: "5/15/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# necessary packages
+library(tidyverse) #general purpose data science toolkit
+library(foreign)      # for reading .dbf files
+library(dplyr)#needed for data manipulation and summarizing
+library(data.table)
+```
+
+```{r}
+# The purpose of this script is to provide a script to download 
+# relevant datasets, combine them, and write them for additional 
+# processing. 
+
+
+# download, upzip, and read most recent data and chemical storet info
+urls <- c("https://www.waterboards.ca.gov/drinking_water/certlic/drinkingwater/documents/edtlibrary/chemical.zip",
+          "https://www.waterboards.ca.gov/drinking_water/certlic/drinkingwater/documents/edtlibrary/storet.zip")
+temp1 <- temp2 <- tempfile()
+download.file(urls[1], temp1)
+download.file(urls[2], temp2)
+
+# change exdir paths to a local working directory
+
+unzip(temp1, 
+      exdir = "/Users/SCoffin/Documents/OFFLINE/DATA/R/Perchlorate")
+unzip(temp2,
+      exdir = "/Users/SCoffin/Documents/OFFLINE/DATA/R/Perchlorate")
+
+rm(temp1, temp2) # remove temp files
+
+# read chem and storet data into R
+# sometimes, R fails to unzip `chem`. unsure why, but manual download/unzip works
+chem  <- read.dbf("/Users/SCoffin/Documents/OFFLINE/DATA/R/Perchlorate/chemical.dbf")
+stor  <- read.dbf("/Users/SCoffin/Documents/OFFLINE/DATA/R/Perchlorate/storet.dbf")
+# sdwis <- read_csv("https://data.ca.gov/sites/default/files/Public%20Potable%20Water%20Systems%20FINAL%2006-22-2018_0.csv")
+
+# SDWIS data updates periodically, breaking the csv in url:
+# https://data.ca.gov/dataset/drinking-water-public-water-system-information
+sdwis <- read_csv("https://data.ca.gov/dataset/d6d3beac-6735-4127-9324-4e70f61698d9/resource/9dca2f92-4630-4bee-a9f9-69d2085b57e3/download/drinking-water-watch-public-water-system-facilities.csv")
+
+# make equivalent water system identifers 
+sdwis$`Water System No` <- str_sub(sdwis$`Water System No`, 3, 9)
+chem$PRIM_STA_C <- str_sub(chem$PRIM_STA_C, 1, 7)
+
+# join chem and stor data
+chem <- left_join(chem, stor, by = "STORE_NUM")
+chem <- left_join(chem, sdwis, by = c("PRIM_STA_C" = "Water System No"))
+
+# write the joined data
+#write_rds(chem, "/Users/SCoffin/Documents/OFFLINE/DATA/R/Inorganics Lab Survey/chem.rds")
+write_csv(chem, "/Users/SCoffin/Documents/OFFLINE/DATA/R/Perchlorate/chem.csv")
+```
+
+
+```{r}
+chem <- read_csv("chem.csv")
+# unique public water systems
+ pws_id <- unique(chem$PRIM_STA_C)
+ length(pws_id)
+
+# subset of chem data for prototyping (first 10 unique PWS)
+ chem_sub <- filter(chem, PRIM_STA_C %in% pws_id[1:10])
+ write_rds(chem_sub, "chem_sub.rds")
+ 
+ #rename chemical
+chem %>%
+  rename(
+    CHEMICAL = CHEM_SORT_.x
+  )
+
+# save vector of unique public water systems
+write_rds(pws_id, "pws_id.rds")
+
+
+#let's try using summarize instead of aggregate
+library(dplyr)
+#convert data frame to a data table
+chem_DataTable <- as_tibble(chem) #making it into a tibble makes it more aware of missing values
+#row names are silently dropped. To preserve, convert to an explicit varilable
+rownames_to_column(chem_DataTable)
+
+#let's add columns to separate years, months, and days
+library(lubridate)
+chem_DataTable = chem_DataTable %>%
+  mutate(date = ymd(INDATE)) %>%
+  mutate_at(vars(INDATE), funs(year, month, day)) %>%
+  mutate_at(vars(year, month, day), as.factor)
+```
+
+```{r}
+##alternative method to extract dates
+##convert INDATE to character
+#chem <- mutate_at(chem, vars(INDATE), as.character)
+##Convert INDATE to date
+#chem$date <- as.Date(chem$INDATE,
+ #               format = "%Y-%m-%d")
+#chem$date
+##Extract year from submittal date
+#chem$INDATE_YEAR <- substr(chem$INDATE, 1, 4)
+##convert to factor
+#chem <- mutate_at(chem, vars(INDATE_YEAR), as.factor)  
+```
+
+
+Let's see the chemical names
+```{r}
+sort(unique(chem$CHEM_SORT_.x))
+```
+we only want to look at Perchlorate, so let's subset the data
+
+```{r}
+#clean up spaces and commas
+names(chem)<- str_replace_all(names(chem), c(" " = "_" ,
+                                                     "," = "."))
+#convert to tibble
+chem <- as.tibble(chem)
+
+#select chemicals to keep in subset
+subchems <- c("Perchlorate")
+#subset the data using the prototype first
+Perchlorate <- chem_sub[chem_sub$CHEMICAL__ %in% subchems,]
+#GREAT IT WORKS, now let's subset the big data file 
+Perchlorate <- chem[chem$CHEMICAL__ %in% subchems,]
+#clean up the unused levels
+Perchlorate <- droplevels(Perchlorate)
+
+# write the subset for inorganics
+write_csv(Perchlorate, "/Users/SCoffin/Documents/OFFLINE/DATA/R/Perchlorate/Perchlorate_EDT.csv")
+```
+
